@@ -287,6 +287,10 @@ img{max-width:100%}
 .linkbtn:hover{color:var(--fg)}
 .login{max-width:420px;margin:6vh auto 0}
 .cred{font-family:var(--f-mono);background:var(--tint);border-radius:5px;padding:12px;white-space:pre-wrap;font-size:14px}
+.pill.edited{background:var(--tint);color:var(--fg);box-shadow:inset 0 0 0 1px var(--muted)}
+.pill.lock{background:var(--tint);color:var(--muted)}
+.editbanner{display:flex;gap:10px;align-items:center;flex-wrap:wrap;width:100%}
+.editbanner .banner{flex:1 1 260px;margin:0}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 </head>
@@ -307,7 +311,7 @@ img{max-width:100%}
 const SB_URL='https://xjprxkgvptvbiwytcbyg.supabase.co', SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhqcHJ4a2d2cHR2Yml3eXRjYnlnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcxMzA2ODAsImV4cCI6MjEwMjcwNjY4MH0.mztpyWsAzt_quFy--Ne-KWK-OmLTtOtgYF6cizulMBY', LOGIN_DOMAIN='vdc.admanelectric.com';
 const sb=supabase.createClient(SB_URL,SB_KEY,{auth:{persistSession:true,autoRefreshToken:true,storageKey:'vdc-log-auth'}});
 const loginEmail=u=>{u=String(u||'').trim().toLowerCase();return u.includes('@')?u:`${u.replace(/[^a-z0-9._-]/g,'')}@${LOGIN_DOMAIN}`};
-const normRep=r=>({_id:r.id,_uid:r.author,team:r.team,kind:r.kind,date:r.date,name:r.name,head:r.head||{},secs:r.secs||{},jobs:r.jobs||[],pos:r.pos||[],hours:Number(r.hours)||0,reviewed:!!r.reviewed,submittedAt:r.submitted_at,updatedAt:r.submitted_at});
+const normRep=r=>({_id:r.id,_uid:r.author,team:r.team,kind:r.kind,date:r.date,name:r.name,head:r.head||{},secs:r.secs||{},jobs:r.jobs||[],pos:r.pos||[],hours:Number(r.hours)||0,reviewed:!!r.reviewed,submittedAt:r.submitted_at,updatedAt:r.updated_at||r.submitted_at,editedAt:r.edited_at||null});
 const normJob=j=>({jobNo:j.job_no,name:j.name,pm:j.pm,gc:j.gc,location:j.location,active:j.active,pos:j.pos||[]});
 async function fnCall(body){const {data,error}=await sb.functions.invoke('vdc-admin',{body});
   if(error){let m='Something went wrong.';try{const j=await error.context.json();m=j.error||m}catch(e){m=error.message||m}throw new Error(m)}
@@ -441,17 +445,17 @@ function overlay(html){const o=$('#ov');o.innerHTML=html?`<div class="overlay" i
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&$('#ovbg')&&overlay.onclose)overlay.onclose()});
 
 /* ---------- tabs & render ---------- */
-function tabs(){if(!st.me){$('#tabs').innerHTML='';return}const t=st.owner?[['log','Team Log'],['needs','Needs & Look-ahead'],['jobrep','Job Files'],['people','Team Members'],['new','New Report'],['tools','Tools'],['jobs','Jobs'],['accounts','Logins']]:[['new','New Report'],['tools','Tools'],['jobs','Jobs']];
+function tabs(){if(!st.me){$('#tabs').innerHTML='';return}const t=st.owner?[['log','Team Log'],['needs','Needs & Look-ahead'],['jobrep','Job Files'],['people','Team Members'],['new','New Report'],['tools','Tools'],['jobs','Jobs'],['accounts','Logins']]:[['new','New Report'],['mine','My Reports'],['tools','Tools'],['jobs','Jobs']];
   $('#tabs').innerHTML=t.map(([k,l])=>`<button role="tab" data-tab="${k}" aria-selected="${st.tab===k}">${l}</button>`).join('');
-  $('#tabs').querySelectorAll('button').forEach(b=>b.onclick=()=>{if(st.tab==='new')saveDraft();st.tab=b.dataset.tab;st.openRep=null;render();window.scrollTo(0,0);refresh()})}
+  $('#tabs').querySelectorAll('button').forEach(b=>b.onclick=()=>{if(st.tab==='new')saveDraft();if(st.editing)endEdit();st.tab=b.dataset.tab;st.openRep=null;st.openMine=null;render();window.scrollTo(0,0);refresh()})}
 function render(){tabs();const v=$('#view');$('#abar').innerHTML='';
   if(st.auth==='loading'){v.innerHTML=`<div class="sheet"><div class="empty">Loading…</div></div>`;return}
   if(st.auth==='setup')return viewSetup(v);
   if(st.auth==='login')return viewLogin(v);
   if(st.auth==='nomember')return viewNoMember(v);
   if(!st.ready){v.innerHTML=`<div class="sheet"><div class="empty">Loading…</div></div>`;return}
-  if(!st.owner&&!['new','tools','jobs'].includes(st.tab))st.tab='new';
-  ({new:viewNew,log:viewLog,needs:viewNeeds,jobrep:viewJobRep,people:viewPeople,tools:viewTools,jobs:viewJobs,accounts:viewAccounts})[st.tab](v)}
+  if(!st.owner&&!['new','mine','tools','jobs'].includes(st.tab))st.tab='new';
+  ({new:viewNew,mine:viewMine,log:viewLog,needs:viewNeeds,jobrep:viewJobRep,people:viewPeople,tools:viewTools,jobs:viewJobs,accounts:viewAccounts})[st.tab](v)}
 
 /* ---------- inputs ---------- */
 function jobOptions(sel,{any,addNew}={}){const js=Object.values(st.jobs).filter(j=>j.active!==false||j.jobNo===sel).sort((a,b)=>String(a.jobNo).localeCompare(String(b.jobNo),undefined,{numeric:true}));
@@ -472,12 +476,12 @@ const hoursSec=s=>s.secs.find(x=>x.hours);
 function blankDraft(){const c=sch();const d={date:st.kind==='weekly'?weekEnd(today()):today(),name:LS.get('vdc-name',''),head:{},secs:{}};
   const last=LS.get('vdc-head-'+st.team,{});c.header.forEach(h=>{d.head[h.k]=last[h.k]||h.def||''});
   c.secs.forEach(s=>d.secs[s.k]={rows:s.type==='grid'?Array.from({length:s.rows||1},()=>({})):undefined,checks:{},fields:{}});return d}
-const draftKey=()=>`vdc-draft-${st.team}-${st.kind}`;
+const draftKey=()=>st.editing?`vdc-edit-${st.editing.id}`:`vdc-draft-${st.team}-${st.kind}`;
 function viewNew(v){
-  if(st.submitted){v.innerHTML=`<div class="sheet success"><div class="tick" aria-hidden="true">✓</div><h2>Report sent</h2><p class="sub" style="font-size:15px">${esc(st.submitted)} went to the VDC Manager.</p><div class="bar" style="justify-content:center;margin-top:16px"><button class="btn red" id="another">Start another report</button></div></div>`;
-    $('#another').onclick=()=>{st.submitted=null;render();window.scrollTo(0,0)};return}
-  const c=sch();const d=LS.get(draftKey(),null)||blankDraft();const hasDraft=!!LS.get(draftKey(),null);
-  if(hasDraft&&d.savedOn!==today())d.date=st.kind==='weekly'?weekEnd(today()):today();
+  if(st.submitted){v.innerHTML=`<div class="sheet success"><div class="tick" aria-hidden="true">✓</div><h2>${st.wasEdit?'Changes saved':'Report sent'}</h2><p class="sub" style="font-size:15px">${esc(st.submitted)} went to the VDC Manager.</p><div class="bar" style="justify-content:center;margin-top:16px"><button class="btn red" id="another">Start another report</button></div></div>`;
+    $('#another').onclick=()=>{st.submitted=null;st.wasEdit=false;render();window.scrollTo(0,0)};if(!st.owner)$('#another').insertAdjacentHTML('afterend','<button class="btn ghost" id="toMine">See my reports</button>'),$('#toMine').onclick=()=>{st.submitted=null;st.wasEdit=false;st.tab='mine';render();window.scrollTo(0,0)};return}
+  const c=sch();const d=LS.get(draftKey(),null)||(st.editing?editDraft():blankDraft());const hasDraft=!!LS.get(draftKey(),null);
+  if(hasDraft&&!st.editing&&d.savedOn!==today())d.date=st.kind==='weekly'?weekEnd(today()):today();
   const lastJobs=LS.get('vdc-last-'+st.team,null);
   v.innerHTML=`
   <div class="bar">
@@ -510,7 +514,7 @@ function viewNew(v){
   f.addEventListener('click',e=>{const rm=e.target.closest('[data-rm]');if(rm){const tb=rm.closest('tbody');rm.closest('tr').remove();if(!tb.children.length)addRow(rm.dataset.rm,false);calcRows();debounceSave()}
     const ad=e.target.closest('[data-add]');if(ad){addRow(ad.dataset.add,true);debounceSave()}});
   f.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.tagName==='INPUT'){e.preventDefault();const all=[...f.querySelectorAll('input:not([readonly]),select,textarea')];const i=all.indexOf(e.target);all[i+1]?.focus()}});
-  calcRows()}
+  calcRows();dateLimits();if(st.editing)editChrome()}
 function secHtml(s,si,v){
   let h=`<div class="sec" data-sec="${s.k}"><h3><span class="n">${si+1}</span>${esc(s.title)}${s.opt?'<span class="cnt">optional</span>':''}</h3>${s.note?`<p class="note">${esc(s.note)}</p>`:''}`;
   if(s.type==='grid'){const rows=v.rows&&v.rows.length?v.rows:[{}];
@@ -543,6 +547,7 @@ function saveDraft(){if(!$('#rform'))return;LS.set(draftKey(),{...readForm(),sav
 /* review & send */
 function checkDraft(d){const c=sch();const errs=[],warns=[];
   if(!d.date)errs.push({m:'Add the date.',el:'#h-date'});
+  if(d.date&&!st.owner){const [lo,hi]=dateRange();if(d.date<lo||d.date>hi)errs.push({m:st.kind==='weekly'?`Pick a week ending between ${fmtShort(lo)} and ${fmtShort(hi)}. Reports can only go back one week.`:`Pick a date between ${fmtShort(lo)} and ${fmtShort(hi)}. Reports can only go back one week.`,el:'#h-date'})}
   if(!d.name)errs.push({m:'Add your name.',el:'#h-name'});
   const hs=hoursSec(c);const rows=d.secs[hs.k].rows.filter(r=>Object.keys(r).length);
   if(!rows.length)errs.push({m:`Add at least one job with hours in “${hs.title}”.`,sec:hs.k});
@@ -561,14 +566,14 @@ function openReview(){saveDraft();const d=readForm();const {errs,warns}=checkDra
     const first=document.querySelector('.err');first?.scrollIntoView({block:'center',behavior:'smooth'});first?.focus({preventScroll:true});
     toast(errs[0].m+(errs.length>1?` (+${errs.length-1} more)`:''));return}
   const preview=buildDoc(d);
-  overlay(`<div class="panel"><div class="sheet"><div class="hd"><h2>Check it over</h2><span class="sub">Once you send it, it goes to the VDC Manager and you won’t be able to change it.</span></div>
+  overlay(`<div class="panel"><div class="sheet"><div class="hd"><h2>Check it over</h2><span class="sub">${st.editing?'Saving replaces the copy the VDC Manager has and marks it as edited.':'Once you send it, it goes to the VDC Manager. You can still fix it from My Reports for 7 days after you send it.'}</span></div>
    ${warns.length?`<div class="sec"><div class="banner warn"><b>Double-check:</b><ul class="issues" style="margin:6px 0 0;padding-left:18px">${warns.map(w=>`<li>${esc(w)}</li>`).join('')}</ul></div></div>`:''}
    <div class="foot"><button class="btn ghost" id="keepEdit">Keep editing</button><span class="grow"></span><span class="hrs">${preview.hours} hrs</span><button class="btn red" id="sendBtn">Send to VDC Manager</button></div></div>
    ${reportHtml({...preview,submittedAt:null})}
    <div class="bar"><button class="btn ghost" id="keepEdit2">Keep editing</button><span class="grow"></span><button class="btn red" id="sendBtn2">Send to VDC Manager</button></div></div>`);
   overlay.onclose=()=>overlay('');
   ['keepEdit','keepEdit2'].forEach(id=>$('#'+id).onclick=()=>overlay(''));
-  ['sendBtn','sendBtn2'].forEach(id=>$('#'+id).onclick=()=>send(preview))}
+  ['sendBtn','sendBtn2'].forEach(id=>{$('#'+id).onclick=()=>send(preview);if(st.editing)$('#'+id).textContent='Save changes'})}
 function buildDoc(d){const c=sch();Object.values(d.secs).forEach(s=>{if(s.rows)s.rows=s.rows.filter(r=>Object.keys(r).length)});
   const jobs=new Set(),pos=new Set();let hours=0;
   c.secs.forEach(s=>{(d.secs[s.k].rows||[]).forEach(r=>{if(r.job)jobs.add(r.job);if(r.po)pos.add(r.po);if(s.hours)hours+=n(r.hours)});(s.fields||[]).forEach(f=>{const v=d.secs[s.k].fields?.[f.k];if(f.t==='job'&&v)jobs.add(v)})});
@@ -576,13 +581,14 @@ function buildDoc(d){const c=sch();Object.values(d.secs).forEach(s=>{if(s.rows)s
 async function send(doc){if(!st.uid){toast('Your sign-in expired. Sign in again.');return}
   document.querySelectorAll('#sendBtn,#sendBtn2').forEach(b=>{b.disabled=true;b.textContent='Sending…'});
   const now=new Date();doc={...doc,submittedAt:now.toISOString(),updatedAt:now.toISOString()};
-  try{const {error}=await sb.from('vdc_reports').insert({team:doc.team,kind:doc.kind,date:doc.date,name:doc.name,head:doc.head,secs:doc.secs,jobs:doc.jobs,pos:doc.pos,hours:doc.hours});if(error)throw error;
-    if(st.owner)loadReports().then(rer);
+  try{const row={team:doc.team,kind:doc.kind,date:doc.date,name:doc.name,head:doc.head,secs:doc.secs,jobs:doc.jobs,pos:doc.pos,hours:doc.hours};
+    const {error}=st.editing?await sb.from('vdc_reports').update(row).eq('id',st.editing.id).select('id').single():await sb.from('vdc_reports').insert(row);if(error)throw error;
+    loadReports().then(rer);
     LS.set('vdc-name',doc.name);LS.set('vdc-head-'+doc.team,doc.head);
     if(doc.kind==='daily'){const hs=hoursSec(S[doc.team].daily);LS.set('vdc-last-'+doc.team,(doc.secs[hs.k].rows||[]).map(r=>{const o={job:r.job};if(r.po)o.po=r.po;if(r.foreman)o.foreman=r.foreman;return o}))}
-    LS.del(draftKey());overlay('');st.submitted=`Your ${S[doc.team].daily.title.toLowerCase().includes('bim')&&doc.kind==='daily'?'daily BIM report':(doc.kind+' '+S[doc.team].short+' report')} for ${fmtD(doc.date)}`;render();window.scrollTo(0,0)}
-  catch(err){document.querySelectorAll('#sendBtn,#sendBtn2').forEach(b=>{b.disabled=false;b.textContent='Send to VDC Manager'});
-    toast(err?.code==='42501'?'Your login isn’t allowed to send reports. Ask the VDC Manager to check your account.':/JWT|session/i.test(err?.message||'')?'Your sign-in expired. Sign in again; your draft is saved.':'Couldn’t send. Check your connection and try again. Your draft is saved.')}}
+    LS.del(draftKey());overlay('');st.wasEdit=!!st.editing;if(st.editing)endEdit();st.submitted=`${st.wasEdit?'The changes to your':'Your'} ${S[doc.team].daily.title.toLowerCase().includes('bim')&&doc.kind==='daily'?'daily BIM report':(doc.kind+' '+S[doc.team].short+' report')} for ${fmtD(doc.date)}`;render();window.scrollTo(0,0)}
+  catch(err){document.querySelectorAll('#sendBtn,#sendBtn2').forEach(b=>{b.disabled=false;b.textContent=st.editing?'Save changes':'Send to VDC Manager'});
+    toast(err?.code==='PGRST116'||/locked/i.test(err?.message||'')?'This report is locked. Reports can only be changed for 7 days after they’re sent.':err?.code==='22023'?err.message:err?.code==='42501'?(/only send/i.test(err.message)?err.message:'Your login isn’t allowed to send reports. Ask the VDC Manager to check your account.'):/JWT|session/i.test(err?.message||'')?'Your sign-in expired. Sign in again; your draft is saved.':'Couldn’t send. Check your connection and try again. Your draft is saved.')}}
 
 /* weekly autofill from own dailies */
 async function fillWeek(){const we=$('#h-date').value;if(!we){toast('Set the week ending date first');return}
@@ -632,7 +638,7 @@ function jobLabel(no){const j=st.jobs[jobKey(no)];return j?`${no} · ${j.name||'
 function cell(c,v){if(v==null||v==='')return'';if(v==='Josh')v='VDC Manager';if(c.k==='details'&&typeof v==='string'&&false)return'';if(c.t==='job')return esc(jobLabel(v));if(c.t==='date')return esc(fmtShort(v));return esc(v)}
 function reportHtml(r,onlyJob){const c=S[r.team]?.[r.kind];if(!c)return'<div class="sheet"><div class="empty">Unknown report type</div></div>';
   const head=[{l:r.kind==='weekly'?'Week ending':'Date',v:fmtD(r.date)},{l:r.team==='bim'?'Modeler':'Crew member(s)',v:r.name},...c.header.map(h=>({l:h.l,v:r.head?.[h.k]})),{l:'Total hours',v:r.hours}];
-  let h=`<div class="sheet ro"><div class="hd"><h2>${c.title}</h2><span class="pill ${r.team==='bim'?'bim':'lay'}">${S[r.team].label}</span>${r.submittedAt?(r.reviewed?'<span class="pill rev">Reviewed</span>':'<span class="pill new">Not reviewed</span>'):''}${r.submittedAt?`<span class="sub">Sent ${esc(new Date(r.submittedAt).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}))}</span>`:''}</div>
+  let h=`<div class="sheet ro"><div class="hd"><h2>${c.title}</h2><span class="pill ${r.team==='bim'?'bim':'lay'}">${S[r.team].label}</span>${r.submittedAt?(r.reviewed?'<span class="pill rev">Reviewed</span>':'<span class="pill new">Not reviewed</span>'):''}${r.editedAt?`<span class="pill edited" title="Changed by the sender after it was first sent">Edited ${esc(new Date(r.editedAt).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}))}</span>`:''}${r.submittedAt?`<span class="sub">Sent ${esc(new Date(r.submittedAt).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}))}</span>`:''}</div>
   <div class="sec"><dl>${head.map(x=>`<div><dt>${esc(x.l)}</dt><dd>${esc(x.v??'')||'—'}</dd></div>`).join('')}</dl></div>`;
   c.secs.forEach((s,si)=>{const v0=r.secs?.[s.k]||{};const v=onlyJob&&s.cols?.some(x=>x.k==='job')?{...v0,rows:(v0.rows||[]).filter(x=>x.job===onlyJob)}:v0;let body='';
     if(s.type==='grid'&&v.rows?.length)body+=`<div class="tbl"><table><thead><tr>${s.cols.map(x=>`<th>${esc(x.l)}</th>`).join('')}</tr></thead><tbody>${v.rows.map(row=>`<tr>${s.cols.map(x=>`<td class="${x.t==='num'?'num':''}">${cell(x,row[x.k])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
@@ -665,7 +671,7 @@ const personName=uid=>people().find(p=>p.uid===uid)?.name||'Team member';
 function workdays(from,to){const out=[];let d=from;while(d<=to){const w=parseD(d).getDay();if(w>0&&w<6)out.push(d);d=addDays(d,1)}return out}
 
 /* ---------- report list / open ---------- */
-function repRows(list,showName,q){if(!list.length)return'';return `<div class="tbl"><table class="list"><thead><tr><th>Date</th><th>Report</th>${showName?'<th>Name</th>':''}<th>Jobs</th><th>POs</th>${q?'<th>Match</th>':''}<th style="text-align:right">Hours</th><th>Status</th></tr></thead><tbody>${list.map(r=>`<tr data-open="${esc(r._uid)}|${esc(r._id)}" tabindex="0"><td class="mono" style="white-space:nowrap">${esc(fmtShort(r.date))}</td><td style="white-space:nowrap"><span class="pill ${r.team==='bim'?'bim':'lay'}">${S[r.team]?.short||r.team}</span> ${r.kind==='daily'?'Daily':'Weekly'}</td>${showName?`<td>${esc(r.name)}</td>`:''}<td class="mono">${esc((r.jobs||[]).join(', '))}</td><td class="mono">${esc(repPOs(r).join(', '))}</td>${q?`<td class="snip">${snippet(r,q)}</td>`:''}<td class="num">${r.hours||0}</td><td>${r.reviewed?'<span class="pill rev">Reviewed</span>':'<span class="pill new">New</span>'}</td></tr>`).join('')}</tbody></table></div>`}
+function repRows(list,showName,q){if(!list.length)return'';return `<div class="tbl"><table class="list"><thead><tr><th>Date</th><th>Report</th>${showName?'<th>Name</th>':''}<th>Jobs</th><th>POs</th>${q?'<th>Match</th>':''}<th style="text-align:right">Hours</th><th>Status</th></tr></thead><tbody>${list.map(r=>`<tr data-open="${esc(r._uid)}|${esc(r._id)}" tabindex="0"><td class="mono" style="white-space:nowrap">${esc(fmtShort(r.date))}</td><td style="white-space:nowrap"><span class="pill ${r.team==='bim'?'bim':'lay'}">${S[r.team]?.short||r.team}</span> ${r.kind==='daily'?'Daily':'Weekly'}</td>${showName?`<td>${esc(r.name)}</td>`:''}<td class="mono">${esc((r.jobs||[]).join(', '))}</td><td class="mono">${esc(repPOs(r).join(', '))}</td>${q?`<td class="snip">${snippet(r,q)}</td>`:''}<td class="num">${r.hours||0}</td><td>${r.reviewed?'<span class="pill rev">Reviewed</span>':'<span class="pill new">New</span>'}${r.editedAt?' <span class="pill edited">Edited</span>':''}</td></tr>`).join('')}</tbody></table></div>`}
 function bindOpen(v){v.querySelectorAll('[data-open]').forEach(tr=>{const go=()=>{const [uid,id]=tr.dataset.open.split('|');st.openRep={uid,id};render();window.scrollTo(0,0)};tr.onclick=go;tr.onkeydown=e=>{if(e.key==='Enter')go()}})}
 function viewOpen(v,back){const o=st.openRep;const r=st.reports.find(x=>x._id===o.id);if(!r){st.openRep=null;return false}
   const rr=r;
@@ -906,7 +912,7 @@ function calcEval(src,defUnit,ans,mem){
   function expr(){let a=term();for(;;){skip();const c=s[i];if(c!=='+'&&c!=='-')return a;i++;a=add(a,term(),c==='+'?1:-1)}}
   if(!s.trim())return null;const out=expr();skip();if(i<s.length)fail(`Can’t read “${s.slice(i,i+8)}”`);
   return out.bare?{v:out.v*unitF,dim:1,fromBare:out.v}:out}
-function calcRows(r,den){if(!r)return'';
+function calcOutRows(r,den){if(!r)return'';
   if(r.dim===1){const x=r.v;return rows([['Feet-inches',fmtFtIn(x,den),1],['Decimal feet',dec(x/12,4)+"'",1],['Inches',fmtIn(x,den)+` (${dec(x,4)}")`],['Millimeters',dec(x*25.4,1)+' mm'],['Meters',dec(x*0.0254,4)+' m']])}
   if(r.dim===2)return rows([['Square feet',dec(r.v/144,3)+' sq ft',1],['Square inches',dec(r.v,2)+' sq in'],['Square meters',dec(r.v*0.00064516,3)+' m²']]);
   if(r.dim===3)return rows([['Cubic feet',dec(r.v/1728,3)+' cu ft',1],['Cubic yards',dec(r.v/46656,3)+' cu yd',1],['Cubic meters',dec(r.v*0.000016387064,3)+' m³']]);
@@ -1107,12 +1113,13 @@ new MutationObserver(()=>{clearTimeout(cardify.t);cardify.t=setTimeout(()=>cardi
 /* ---------- data loading ---------- */
 let rt;const rer=()=>{clearTimeout(rt);rt=setTimeout(()=>{if(st.ready&&!$('#rform')&&!$('#ovbg'))render()},150)};
 async function loadJobs(){const {data,error}=await sb.from('vdc_jobs').select('*');if(error)return;const m={};(data||[]).forEach(j=>m[jobKey(j.job_no)]=normJob(j));st.jobs=m}
-/* full load once, then only reports newer than the newest one already on screen (keeps data use small) */
-async function loadReports(full){if(!st.owner)return;
-  const newest=!full&&st.reports.length?st.reports.reduce((m,r)=>r.submittedAt>m?r.submittedAt:m,''):'';
-  const out=[];for(let from=0;;from+=1000){let q=sb.from('vdc_reports').select('*').order('submitted_at',{ascending:false}).range(from,from+999);if(newest)q=q.gt('submitted_at',newest);
+/* full load once, then only reports changed since the newest change already on screen (keeps data use small).
+   The VDC Manager gets every report; team members get only their own (the database enforces this). */
+async function loadReports(full){
+  const newest=!full&&st.reports.length?st.reports.reduce((m,r)=>r.updatedAt>m?r.updatedAt:m,''):'';
+  const out=[];for(let from=0;;from+=1000){let q=sb.from('vdc_reports').select('*').order('updated_at',{ascending:false}).range(from,from+999);if(newest)q=q.gt('updated_at',newest);
     const {data,error}=await q;if(error)return;out.push(...data);if(data.length<1000)break}
-  if(newest){if(!out.length)return;const seen=new Set(st.reports.map(r=>r._id));st.reports=[...out.map(normRep).filter(r=>!seen.has(r._id)),...st.reports]}
+  if(newest){if(!out.length)return;const m=new Map(st.reports.map(r=>[r._id,r]));out.forEach(x=>m.set(x.id,normRep(x)));st.reports=[...m.values()]}
   else st.reports=out.map(normRep);
   textCache.clear()}
 async function loadMembers(){if(!st.owner)return;const {data}=await sb.from('vdc_members').select('*').order('name');st.members=data||[]}
@@ -1217,8 +1224,53 @@ async function start(){
   await Promise.all([loadJobs(),loadReports(true),loadMembers()]);lastRefresh=Date.now();
   st.ready=true;render()}
 sb.auth.onAuthStateChange(ev=>{if(ev==='SIGNED_OUT'){st.me=null;st.auth='login';render()}});
-render();start();
 async function persistSecs(r,secs){const {error}=await sb.from('vdc_reports').update({secs}).eq('id',r._id);if(error)throw error}
+
+/* ---------- own reports: 7-day edit window, past-week dates ---------- */
+const EDIT_MS=7*864e5;
+const editUntil=r=>new Date(new Date(r.submittedAt).getTime()+EDIT_MS);
+const canEdit=r=>!!r&&r._uid===st.uid&&Date.now()<editUntil(r).getTime();
+const fmtWhen=d=>d.toLocaleString(undefined,{weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
+const repLabel=r=>`${r.kind==='daily'?'daily':'weekly'} ${S[r.team]?.short||''} report`.replace('  ',' ');
+function dateRange(){const t=today();let lo=addDays(t,-6),hi=st.kind==='weekly'?addDays(t,6):t;
+  if(st.editing){const o=st.editing.date;if(o<lo)lo=o;if(o>hi)hi=o}return[lo,hi]}
+function dateLimits(){const el=$('#h-date');if(!el||st.owner)return;const [lo,hi]=dateRange();el.min=lo;el.max=hi}
+function editDraft(){const r=st.reports.find(x=>x._id===st.editing.id);if(!r)return blankDraft();
+  return{date:r.date,name:r.name,head:{...(r.head||{})},secs:JSON.parse(JSON.stringify(r.secs||{}))}}
+function startEdit(r){if(!canEdit(r)){toast('This report is locked. Reports can only be changed for 7 days after they’re sent.');return}
+  if(st.tab==='new'&&!st.editing)saveDraft();
+  st.editing={id:r._id,date:r.date,prev:{team:st.team,kind:st.kind}};st.team=r.team;st.kind=r.kind;st.submitted=null;st.openMine=null;st.tab='new';render();window.scrollTo(0,0)}
+function endEdit(){const p=st.editing?.prev;st.editing=null;if(p){st.team=p.team;st.kind=p.kind}}
+function editChrome(){const r=st.reports.find(x=>x._id===st.editing.id);const bar=$('#view .bar');if(!r||!bar)return;
+  bar.innerHTML=`<div class="editbanner"><div class="banner warn"><b>Editing your ${esc(repLabel(r))} for ${esc(fmtD(r.date))}.</b> You can make changes until ${esc(fmtWhen(editUntil(r)))}.</div><button class="btn ghost sm" id="cancelEdit">Cancel</button></div>`;
+  $('#cancelEdit').onclick=()=>{LS.del(draftKey());endEdit();st.tab='mine';st.openMine=r._id;render();window.scrollTo(0,0)};
+  const cd=$('#clearDraft');if(cd){cd.textContent='Undo my changes';cd.onclick=()=>confirmBox('Undo your changes and go back to what you sent?','Undo changes',()=>{LS.del(draftKey());render();toast('Back to what you sent')})}
+  const rb=$('#reviewBtn');if(rb)rb.textContent='Review & save'}
+function viewMine(v){const mine=st.reports.filter(r=>r._uid===st.uid);
+  if(st.openMine){const r=mine.find(x=>x._id===st.openMine);
+    if(r){const ok=canEdit(r);
+      v.innerHTML=`<div class="bar"><button class="back" id="back">← My reports</button><span class="grow"></span>
+        <button class="btn ghost sm" onclick="window.print()">Print / Save PDF</button>${ok?'<button class="btn red sm" id="editRep">Edit this report</button>':''}</div>
+        <div class="banner ${ok?'':'warn'} noprint" style="margin-bottom:12px">${ok?`You can change this report until <b>${esc(fmtWhen(editUntil(r)))}</b>. After that it’s locked.`:'This report is locked. Reports can only be changed for 7 days after they’re sent. If something needs fixing, tell the VDC Manager.'}</div>${reportHtml(r)}`;
+      $('#back').onclick=()=>{st.openMine=null;render();window.scrollTo(0,0)};
+      $('#editRep')&&($('#editRep').onclick=()=>startEdit(r));return}
+    st.openMine=null}
+  const F=st.mf||(st.mf={kind:'',q:''});
+  const list=mine.filter(r=>(!F.kind||r.kind===F.kind)&&matchQ(r,F.q)).sort((a,b)=>b.date.localeCompare(a.date)||String(b.submittedAt).localeCompare(String(a.submittedAt)));
+  v.innerHTML=`<div class="sheet"><div class="hd"><h2>My Reports</h2><span class="sub">Everything you’ve sent. You can fix a report for 7 days after you send it; after that it’s locked.</span></div>
+   <div class="sec noprint"><div class="bar" style="margin-bottom:10px"><div class="seg" role="group" aria-label="Report type">${[['','All'],['daily','Dailies'],['weekly','Weeklies']].map(([k,l])=>`<button data-mk="${k}" aria-pressed="${F.kind===k}">${l}</button>`).join('')}</div></div>
+    <div class="fields"><label class="f full"><span>Search your reports</span><input type="search" id="mq" value="${esc(F.q)}" placeholder="Job #, PO, area, notes…"></label></div></div>
+   ${list.length?`<div class="tbl"><table class="list"><thead><tr><th>Date</th><th>Report</th><th>Jobs</th><th style="text-align:right">Hours</th><th>Status</th><th></th></tr></thead><tbody>${list.map(r=>{const ok=canEdit(r);
+     return `<tr data-mine="${esc(r._id)}" tabindex="0"><td class="mono" style="white-space:nowrap">${esc(fmtShort(r.date))}</td><td style="white-space:nowrap"><span class="pill ${r.team==='bim'?'bim':'lay'}">${S[r.team]?.short||r.team}</span> ${r.kind==='daily'?'Daily':'Weekly'}</td><td class="mono">${esc((r.jobs||[]).join(', '))}</td><td class="num">${r.hours||0}</td>
+     <td>${ok?`<span class="muted" style="font-size:12.5px">Editable until ${esc(fmtWhen(editUntil(r)))}</span>`:'<span class="pill lock">Locked</span>'}${r.editedAt?' <span class="pill edited">Edited</span>':''}${r.reviewed?' <span class="pill rev">Reviewed</span>':''}</td>
+     <td style="text-align:right;white-space:nowrap">${ok?`<button class="btn ghost sm" data-edit="${esc(r._id)}">Edit</button>`:''}</td></tr>`}).join('')}</tbody></table></div>`
+     :`<div class="empty">${mine.length?'No reports match.':'You haven’t sent any reports yet. They’ll show up here after you send them.'}</div>`}</div>`;
+  v.querySelectorAll('[data-mk]').forEach(b=>b.onclick=()=>{F.kind=b.dataset.mk;render()});
+  let qt;$('#mq').oninput=e=>{clearTimeout(qt);qt=setTimeout(()=>{F.q=e.target.value;render();const el=$('#mq');el.focus();el.setSelectionRange(el.value.length,el.value.length)},250)};
+  v.querySelectorAll('[data-edit]').forEach(b=>b.onclick=e=>{e.stopPropagation();startEdit(mine.find(x=>x._id===b.dataset.edit))});
+  v.querySelectorAll('[data-mine]').forEach(tr=>{const go=()=>{st.openMine=tr.dataset.mine;render();window.scrollTo(0,0)};tr.onclick=go;tr.onkeydown=e=>{if(e.key==='Enter'&&e.target===tr)go()}})}
+
+render();start();
 
 </script>
 </body>
