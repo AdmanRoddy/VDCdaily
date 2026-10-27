@@ -288,6 +288,21 @@ img{max-width:100%}
 .login{max-width:420px;margin:6vh auto 0}
 .cred{font-family:var(--f-mono);background:var(--tint);border-radius:5px;padding:12px;white-space:pre-wrap;font-size:14px}
 .pill.edited{background:var(--tint);color:var(--fg);box-shadow:inset 0 0 0 1px var(--muted)}
+.offnav{gap:8px;margin-bottom:10px}
+.offcal{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:3px}
+.offcal .dow{font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);text-align:center;padding:2px 0}
+.offday{min-height:84px;background:var(--card);border:1px solid var(--line);border-radius:5px;padding:4px;display:flex;flex-direction:column;gap:3px;align-items:stretch;text-align:left;cursor:pointer;font:inherit;color:inherit;min-width:0}
+.offday.wkend{background:var(--tint)}.offday.other{opacity:.45}
+.offday.today .dn{background:var(--red);color:#fff;border-radius:10px;padding:0 6px}
+.offday.sel{outline:2px solid var(--focus);outline-offset:-1px}
+.offday .dn{font-size:12px;font-weight:600;align-self:flex-start}
+.offday .chips{display:flex;flex-direction:column;gap:2px;min-width:0}
+.offchip{display:inline-flex;gap:3px;align-items:baseline;font-size:11.5px;font-weight:600;line-height:1.3;padding:1px 5px;border-radius:4px;background:hsl(var(--h) 65% 50% / .18);border-left:3px solid hsl(var(--h) 60% 45%);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.offchip small{font-size:9.5px;opacity:.8}
+.offday .more{font-size:11px;color:var(--muted)}
+.offrow{display:flex;gap:10px;align-items:center;padding:8px 0;border-top:1px solid var(--line)}
+.offrow .offchip{font-size:13px;padding:3px 8px;flex:none;max-width:40%}
+@media (max-width:720px){.offday{min-height:54px;padding:3px}.offchip{font-size:10px;padding:0 3px;border-left-width:2px}.offchip small{display:none}.offcal{gap:2px}}
 .pill.lock{background:var(--tint);color:var(--muted)}
 .editbanner{display:flex;gap:10px;align-items:center;flex-wrap:wrap;width:100%}
 .editbanner .banner{flex:1 1 260px;margin:0}
@@ -445,7 +460,7 @@ function overlay(html){const o=$('#ov');o.innerHTML=html?`<div class="overlay" i
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&$('#ovbg')&&overlay.onclose)overlay.onclose()});
 
 /* ---------- tabs & render ---------- */
-function tabs(){if(!st.me){$('#tabs').innerHTML='';return}const t=st.owner?[['log','Team Log'],['needs','Needs & Look-ahead'],['jobrep','Job Files'],['people','Team Members'],['new','New Report'],['tools','Tools'],['jobs','Jobs'],['accounts','Logins']]:[['new','New Report'],['mine','My Reports'],['tools','Tools'],['jobs','Jobs']];
+function tabs(){if(!st.me){$('#tabs').innerHTML='';return}const t=st.owner?[['log','Team Log'],['needs','Needs & Look-ahead'],['jobrep','Job Files'],['people','Team Members'],['timeoff','Time Off'],['new','New Report'],['tools','Tools'],['jobs','Jobs'],['accounts','Logins']]:[['new','New Report'],['mine','My Reports'],['timeoff','Time Off'],['tools','Tools'],['jobs','Jobs']];
   $('#tabs').innerHTML=t.map(([k,l])=>`<button role="tab" data-tab="${k}" aria-selected="${st.tab===k}">${l}</button>`).join('');
   $('#tabs').querySelectorAll('button').forEach(b=>b.onclick=()=>{if(st.tab==='new')saveDraft();if(st.editing)endEdit();st.tab=b.dataset.tab;st.openRep=null;st.openMine=null;render();window.scrollTo(0,0);refresh()})}
 function render(){tabs();const v=$('#view');$('#abar').innerHTML='';
@@ -454,8 +469,8 @@ function render(){tabs();const v=$('#view');$('#abar').innerHTML='';
   if(st.auth==='login')return viewLogin(v);
   if(st.auth==='nomember')return viewNoMember(v);
   if(!st.ready){v.innerHTML=`<div class="sheet"><div class="empty">Loading…</div></div>`;return}
-  if(!st.owner&&!['new','mine','tools','jobs'].includes(st.tab))st.tab='new';
-  ({new:viewNew,mine:viewMine,log:viewLog,needs:viewNeeds,jobrep:viewJobRep,people:viewPeople,tools:viewTools,jobs:viewJobs,accounts:viewAccounts})[st.tab](v)}
+  if(!st.owner&&!['new','mine','timeoff','tools','jobs'].includes(st.tab))st.tab='new';
+  ({new:viewNew,mine:viewMine,timeoff:viewTimeoff,log:viewLog,needs:viewNeeds,jobrep:viewJobRep,people:viewPeople,tools:viewTools,jobs:viewJobs,accounts:viewAccounts})[st.tab](v)}
 
 /* ---------- inputs ---------- */
 function jobOptions(sel,{any,addNew}={}){const js=Object.values(st.jobs).filter(j=>j.active!==false||j.jobNo===sel).sort((a,b)=>String(a.jobNo).localeCompare(String(b.jobNo),undefined,{numeric:true}));
@@ -1125,7 +1140,7 @@ async function loadReports(full){
 async function loadMembers(){if(!st.owner)return;const {data}=await sb.from('vdc_members').select('*').order('name');st.members=data||[]}
 let lastRefresh=0;
 async function refresh(force){if(!st.me)return;if(!force&&Date.now()-lastRefresh<15000)return;lastRefresh=Date.now();
-  await Promise.all([loadJobs(),loadReports(),st.tab==='accounts'?loadMembers():null]);rer()}
+  await Promise.all([loadJobs(),loadReports(),loadTimeoff(),st.tab==='accounts'?loadMembers():null]);rer()}
 setInterval(()=>{if(document.visibilityState==='visible')refresh()},60000);
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')refresh()});
 
@@ -1221,7 +1236,7 @@ async function start(){
   st.allowed=(st.owner||me.team==='both')?['bim','layout']:[me.team];
   if(!st.allowed.includes(st.team))st.team=st.allowed[0];
   st.tab=st.owner?'log':'new';whoBar();
-  await Promise.all([loadJobs(),loadReports(true),loadMembers()]);lastRefresh=Date.now();
+  await Promise.all([loadJobs(),loadReports(true),loadMembers(),loadTimeoff()]);lastRefresh=Date.now();
   st.ready=true;render()}
 sb.auth.onAuthStateChange(ev=>{if(ev==='SIGNED_OUT'){st.me=null;st.auth='login';render()}});
 async function persistSecs(r,secs){const {error}=await sb.from('vdc_reports').update({secs}).eq('id',r._id);if(error)throw error}
@@ -1269,6 +1284,72 @@ function viewMine(v){const mine=st.reports.filter(r=>r._uid===st.uid);
   let qt;$('#mq').oninput=e=>{clearTimeout(qt);qt=setTimeout(()=>{F.q=e.target.value;render();const el=$('#mq');el.focus();el.setSelectionRange(el.value.length,el.value.length)},250)};
   v.querySelectorAll('[data-edit]').forEach(b=>b.onclick=e=>{e.stopPropagation();startEdit(mine.find(x=>x._id===b.dataset.edit))});
   v.querySelectorAll('[data-mine]').forEach(tr=>{const go=()=>{st.openMine=tr.dataset.mine;render();window.scrollTo(0,0)};tr.onclick=go;tr.onkeydown=e=>{if(e.key==='Enter'&&e.target===tr)go()}})}
+
+
+/* ---------- TIME OFF calendar (no approval; everyone on the VDC team can see it) ---------- */
+st.off=[];st.offErr=false;st.offMonth=null;st.offDay=null;st.offTeam='';
+async function loadTimeoff(){const {data,error}=await sb.from('vdc_timeoff').select('*').gte('end_date',addDays(today(),-200)).order('start_date');
+  if(error){st.offErr=true;return}st.offErr=false;st.off=data||[]}
+const OFF_PART={full:'All day',am:'Morning off',pm:'Afternoon off'};
+const offHue=uid=>{let h=0;for(const c of String(uid))h=(h*31+c.charCodeAt(0))>>>0;return [205,28,140,265,95,345,180,48,300,10][h%10]};
+const offChip=(o,short)=>`<span class="offchip" style="--h:${offHue(o.user_id)}" title="${esc(o.name)}${o.part!=='full'?' · '+OFF_PART[o.part]:''}${o.note?' · '+esc(o.note):''}">${esc(short?o.name.split(/\s+/)[0]:o.name)}${o.part!=='full'?`<small>${o.part==='am'?'AM':'PM'}</small>`:''}</span>`;
+const canRemoveOff=o=>st.owner||(o.user_id===st.uid&&o.end_date>=today());
+const fmtRange=o=>o.start_date===o.end_date?fmtD(o.start_date):`${fmtShort(o.start_date)} – ${fmtD(o.end_date)}`;
+const workDays=o=>{let n0=0;for(let d=o.start_date;d<=o.end_date;d=addDays(d,1)){const w=parseD(d).getDay();if(w&&w<6)n0++}return o.part==='full'?n0:n0/2};
+function offOn(d){return st.off.filter(o=>o.start_date<=d&&o.end_date>=d&&(!st.offTeam||o.team===st.offTeam||o.team==='both'))}
+function viewTimeoff(v){
+  if(st.offErr){v.innerHTML=`<div class="sheet"><div class="hd"><h2>Time Off</h2></div><div class="sec"><div class="banner warn">The time off calendar isn’t set up yet${st.owner?'. Run the time off SQL in Supabase, then reload this page.':'. Check back soon.'}</div></div></div>`;return}
+  const td=today();const m0=st.offMonth||td.slice(0,7);const first=parseD(m0+'-01');
+  const gridStart=addDays(m0+'-01',-first.getDay());const lastDay=iso(new Date(first.getFullYear(),first.getMonth()+1,0));
+  const weeks=Math.ceil((first.getDay()+parseD(lastDay).getDate())/7);
+  const sel=st.offDay||td;const outToday=offOn(td);
+  const cells=[];for(let i=0;i<weeks*7;i++){const d=addDays(gridStart,i);const os=offOn(d);const w=i%7;
+    cells.push(`<button class="offday${d.slice(0,7)!==m0?' other':''}${w===0||w===6?' wkend':''}${d===td?' today':''}${d===sel?' sel':''}" data-day="${d}" aria-label="${esc(fmtD(d))}${os.length?': '+os.length+' out':''}"><span class="dn">${parseD(d).getDate()}</span><span class="chips">${os.slice(0,3).map(o=>offChip(o,1)).join('')}${os.length>3?`<span class="more">+${os.length-3}</span>`:''}</span></button>`)}
+  const selList=offOn(sel);
+  const upcoming=st.off.filter(o=>o.end_date>=td&&(!st.offTeam||o.team===st.offTeam||o.team==='both')).sort((a,b)=>a.start_date.localeCompare(b.start_date));
+  const mine=st.owner?[]:st.off.filter(o=>o.user_id===st.uid&&o.end_date<td).sort((a,b)=>b.start_date.localeCompare(a.start_date)).slice(0,10);
+  const row=o=>`<div class="offrow">${offChip(o)}<div class="grow"><div><b>${esc(fmtRange(o))}</b>${o.part!=='full'?` · ${OFF_PART[o.part]}`:''}${workDays(o)&&o.start_date!==o.end_date?` <span class="muted">· ${workDays(o)} work day${workDays(o)===1?'':'s'}</span>`:''}</div>${o.note?`<div class="muted" style="font-size:13px">${esc(o.note)}</div>`:''}</div>${canRemoveOff(o)?`<button class="btn ghost sm" data-deloff="${esc(o.id)}">Remove</button>`:''}</div>`;
+  v.innerHTML=`<div class="sheet"><div class="hd"><h2>Time Off</h2><span class="sub">Post the days you’ll be out so everyone can plan around it. No approval needed. Give 72 hours’ notice when you can.</span></div>
+   <div class="sec noprint"><div class="bar"><button class="btn red" id="addOff">+ Add time off</button><span class="grow"></span>
+     ${st.owner?`<div class="seg" role="group" aria-label="Team">${[['','Everyone'],['bim','BIM'],['layout','Layout']].map(([k,l])=>`<button data-oteam="${k}" aria-pressed="${st.offTeam===k}">${l}</button>`).join('')}</div>`:''}</div>
+     <p class="note" style="margin:10px 0 0">${outToday.length?`<b>Out today:</b> ${outToday.map(o=>esc(o.name)+(o.part!=='full'?` (${o.part==='am'?'AM':'PM'})`:'')).join(', ')}`:'Nobody is out today.'}</p></div>
+   <div class="sec"><div class="bar offnav"><button class="btn ghost sm" id="mPrev" aria-label="Previous month">‹</button><h3 style="margin:0;flex:1;text-align:center">${first.toLocaleDateString(undefined,{month:'long',year:'numeric'})}</h3><button class="btn ghost sm" id="mNext" aria-label="Next month">›</button>${m0!==td.slice(0,7)?'<button class="btn ghost sm" id="mToday">Today</button>':''}</div>
+     <div class="offcal"><div class="dow">Sun</div><div class="dow">Mon</div><div class="dow">Tue</div><div class="dow">Wed</div><div class="dow">Thu</div><div class="dow">Fri</div><div class="dow">Sat</div>${cells.join('')}</div>
+     <div class="offsel"><h3 style="margin:14px 0 8px">${esc(fmtD(sel))}</h3>${selList.length?selList.map(row).join(''):'<p class="muted" style="margin:0">Nobody is out this day.</p>'}</div></div>
+   <div class="sec"><h3>Coming up</h3>${upcoming.length?upcoming.map(row).join(''):'<p class="muted" style="margin:0">No time off posted.</p>'}</div>
+   ${mine.length?`<div class="sec"><h3>Your past time off</h3>${mine.map(row).join('')}</div>`:''}</div>`;
+  const go=mm=>{st.offMonth=mm;st.offDay=null;render()};
+  const shift=k=>{const d=new Date(first.getFullYear(),first.getMonth()+k,1);go(iso(d).slice(0,7))};
+  $('#mPrev').onclick=()=>shift(-1);$('#mNext').onclick=()=>shift(1);$('#mToday')&&($('#mToday').onclick=()=>go(null));
+  v.querySelectorAll('[data-day]').forEach(b=>b.onclick=()=>{const d=b.dataset.day;if(d.slice(0,7)!==m0)st.offMonth=d.slice(0,7);st.offDay=d;render();$('.offsel')?.scrollIntoView({block:'nearest',behavior:'smooth'})});
+  v.querySelectorAll('[data-oteam]').forEach(b=>b.onclick=()=>{st.offTeam=b.dataset.oteam;render()});
+  v.querySelectorAll('[data-deloff]').forEach(b=>b.onclick=()=>{const o=st.off.find(x=>x.id===b.dataset.deloff);
+    confirmBox(`Remove ${o.user_id===st.uid?'your':o.name+'’s'} time off for ${fmtRange(o)}?`,'Remove',async()=>{const {error}=await sb.from('vdc_timeoff').delete().eq('id',o.id);
+      if(error){toast(error.message||'Couldn’t remove it');return}st.off=st.off.filter(x=>x.id!==o.id);toast('Removed');render()})});
+  $('#addOff').onclick=()=>addTimeoff(st.offDay&&st.offDay>=td?st.offDay:td)}
+function addTimeoff(start){const td=today();const ppl=(st.members||[]).filter(m=>m.active);
+  overlay(`<div class="panel narrow"><form class="sheet" id="offForm"><div class="hd"><h2>Add time off</h2><span class="sub">No approval needed. It shows up on the calendar right away.</span></div><div class="sec"><div class="fields">
+   ${st.owner?`<label class="f full"><span>Who</span><select id="ofWho">${ppl.map(m=>`<option value="${esc(m.user_id)}"${m.user_id===st.uid?' selected':''}>${esc(m.name)}</option>`).join('')}</select></label>`:''}
+   <label class="f"><span>First day off</span><input type="date" id="ofFrom" value="${start}"${st.owner?'':` min="${td}"`} required></label>
+   <label class="f"><span>Last day off</span><input type="date" id="ofTo" value="${start}"${st.owner?'':` min="${td}"`} required></label>
+   <label class="f full"><span>How much of the day</span><select id="ofPart"><option value="full">All day</option><option value="am">Morning off (half day)</option><option value="pm">Afternoon off (half day)</option></select></label>
+   <label class="f full"><span>Note (optional, the team can see this)</span><input id="ofNote" maxlength="140" placeholder="e.g. Back Monday, reachable by phone"></label>
+  </div><p class="note" id="ofWarn" style="margin:10px 0 0"></p></div>
+  <div class="foot"><button type="button" class="btn ghost" id="ofNo">Cancel</button><span class="grow"></span><button class="btn red" type="submit" id="ofSave">Add to calendar</button></div></form></div>`);
+  overlay.onclose=()=>overlay('');$('#ofNo').onclick=()=>overlay('');
+  const chk=()=>{const a=$('#ofFrom').value,b=$('#ofTo').value;if(a&&(!b||b<a))$('#ofTo').value=a;
+    const multi=a&&$('#ofTo').value&&$('#ofTo').value!==a;$('#ofPart').disabled=!!multi;if(multi)$('#ofPart').value='full';
+    const soon=a&&a>=td&&(parseD(a)-parseD(td))/864e5<3;$('#ofWarn').textContent=soon?'Heads up: that’s less than 72 hours away. It will still go on the calendar, but let the VDC Manager know directly too.':''};
+  ['ofFrom','ofTo'].forEach(id=>$('#'+id).addEventListener('change',chk));chk();
+  $('#offForm').onsubmit=async e=>{e.preventDefault();const a=$('#ofFrom').value,b=$('#ofTo').value;
+    if(!a||!b){toast('Pick the days');return}if(!st.owner&&a<td){toast('Time off can only be added for today or later.');return}
+    if((parseD(b)-parseD(a))/864e5>60){toast('That’s more than 60 days. Add it in shorter blocks.');return}
+    const who=st.owner?$('#ofWho').value:st.uid;const mem=st.owner?ppl.find(m=>m.user_id===who):st.me;
+    const row={user_id:who,name:mem?.name||st.me.name,team:mem?.team||st.me.team,start_date:a,end_date:b,part:$('#ofPart').value,note:$('#ofNote').value.trim()||null};
+    const sb2=$('#ofSave');sb2.disabled=true;
+    const {data,error}=await sb.from('vdc_timeoff').insert(row).select('*').single();
+    if(error){sb2.disabled=false;toast(error.message||'Couldn’t save. Check your connection.');return}
+    st.off.push(data);overlay('');st.offMonth=a.slice(0,7);st.offDay=a;toast('Added to the calendar');render()}}
 
 render();start();
 
