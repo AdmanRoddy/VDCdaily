@@ -303,6 +303,7 @@ img{max-width:100%}
 .offrow{display:flex;gap:10px;align-items:center;padding:8px 0;border-top:1px solid var(--line)}
 .offrow .offchip{font-size:13px;padding:3px 8px;flex:none;max-width:40%}
 @media (max-width:720px){.offday{min-height:54px;padding:3px}.offchip{font-size:10px;padding:0 3px;border-left-width:2px}.offchip small{display:none}.offcal{gap:2px}}
+@media (max-width:720px){.seg.ruseg{display:flex;width:100%}.seg.ruseg button{flex:1;padding-left:4px;padding-right:4px;min-width:0}}
 .pill.lock{background:var(--tint);color:var(--muted)}
 .editbanner{display:flex;gap:10px;align-items:center;flex-wrap:wrap;width:100%}
 .editbanner .banner{flex:1 1 260px;margin:0}
@@ -460,7 +461,7 @@ function overlay(html){const o=$('#ov');o.innerHTML=html?`<div class="overlay" i
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&$('#ovbg')&&overlay.onclose)overlay.onclose()});
 
 /* ---------- tabs & render ---------- */
-function tabs(){if(!st.me){$('#tabs').innerHTML='';return}const t=st.owner?[['log','Team Log'],['needs','Needs & Look-ahead'],['jobrep','Job Files'],['people','Team Members'],['timeoff','Time Off'],['new','New Report'],['tools','Tools'],['jobs','Jobs'],['accounts','Logins']]:[['new','New Report'],['mine','My Reports'],['timeoff','Time Off'],['tools','Tools'],['jobs','Jobs']];
+function tabs(){if(!st.me){$('#tabs').innerHTML='';return}const t=st.owner?[['log','Team Log'],['needs','Needs & Look-ahead'],['jobrep','Job Files'],['roll','Roll-ups'],['people','Team Members'],['timeoff','Time Off'],['new','New Report'],['tools','Tools'],['jobs','Jobs'],['accounts','Logins']]:[['new','New Report'],['mine','My Reports'],['timeoff','Time Off'],['tools','Tools'],['jobs','Jobs']];
   $('#tabs').innerHTML=t.map(([k,l])=>`<button role="tab" data-tab="${k}" aria-selected="${st.tab===k}">${l}</button>`).join('');
   $('#tabs').querySelectorAll('button').forEach(b=>b.onclick=()=>{if(st.tab==='new')saveDraft();if(st.editing)endEdit();st.tab=b.dataset.tab;st.openRep=null;st.openMine=null;render();window.scrollTo(0,0);refresh()})}
 function render(){tabs();const v=$('#view');$('#abar').innerHTML='';
@@ -470,7 +471,7 @@ function render(){tabs();const v=$('#view');$('#abar').innerHTML='';
   if(st.auth==='nomember')return viewNoMember(v);
   if(!st.ready){v.innerHTML=`<div class="sheet"><div class="empty">Loading…</div></div>`;return}
   if(!st.owner&&!['new','mine','timeoff','tools','jobs'].includes(st.tab))st.tab='new';
-  ({new:viewNew,mine:viewMine,timeoff:viewTimeoff,log:viewLog,needs:viewNeeds,jobrep:viewJobRep,people:viewPeople,tools:viewTools,jobs:viewJobs,accounts:viewAccounts})[st.tab](v)}
+  ({new:viewNew,mine:viewMine,timeoff:viewTimeoff,roll:viewRoll,log:viewLog,needs:viewNeeds,jobrep:viewJobRep,people:viewPeople,tools:viewTools,jobs:viewJobs,accounts:viewAccounts})[st.tab](v)}
 
 /* ---------- inputs ---------- */
 function jobOptions(sel,{any,addNew}={}){const js=Object.values(st.jobs).filter(j=>j.active!==false||j.jobNo===sel).sort((a,b)=>String(a.jobNo).localeCompare(String(b.jobNo),undefined,{numeric:true}));
@@ -1350,6 +1351,101 @@ function addTimeoff(start){const td=today();const ppl=(st.members||[]).filter(m=
     const {data,error}=await sb.from('vdc_timeoff').insert(row).select('*').single();
     if(error){sb2.disabled=false;toast(error.message||'Couldn’t save. Check your connection.');return}
     st.off.push(data);overlay('');st.offMonth=a.slice(0,7);st.offDay=a;toast('Added to the calendar');render()}}
+
+
+/* ---------- ROLL-UP REPORTS (VDC Manager): every daily for a person, PO, or team over a day/week/month/quarter/year ---------- */
+st.ru=st.ru||{by:'person',who:'',po:'',team:'both',per:'week',at:'',view:'sum'};
+const RU_PER=[['day','Day'],['week','Week'],['month','Month'],['quarter','Quarter'],['year','Year']];
+function ruRange(per,at){const d=parseD(at);const y=d.getFullYear(),m=d.getMonth();
+  if(per==='day')return[at,at];
+  if(per==='week'){const s=weekStart(at);return[s,addDays(s,6)]}
+  if(per==='month')return[iso(new Date(y,m,1)),iso(new Date(y,m+1,0))];
+  if(per==='quarter'){const q=Math.floor(m/3)*3;return[iso(new Date(y,q,1)),iso(new Date(y,q+3,0))]}
+  return[iso(new Date(y,0,1)),iso(new Date(y,11,31))]}
+function ruShift(per,at,k){const d=parseD(at);
+  if(per==='day')return addDays(at,k);if(per==='week')return addDays(at,7*k);
+  if(per==='month')return iso(new Date(d.getFullYear(),d.getMonth()+k,1));
+  if(per==='quarter')return iso(new Date(d.getFullYear(),d.getMonth()+3*k,1));
+  return iso(new Date(d.getFullYear()+k,0,1))}
+function ruLabel(per,from,to){const f=parseD(from);
+  if(per==='day')return fmtD(from);
+  if(per==='week')return `Week of ${fmtShort(from)} – ${fmtD(to)}`;
+  if(per==='month')return f.toLocaleDateString(undefined,{month:'long',year:'numeric'});
+  if(per==='quarter')return `Q${Math.floor(f.getMonth()/3)+1} ${f.getFullYear()} (${fmtShort(from)} – ${fmtShort(to)})`;
+  return String(f.getFullYear())}
+function ruPOs(){const m=new Map(allPOs('').map(p=>[p.po,p]));allReports().forEach(r=>{if(r.kind!=='daily')return;const hs=hoursSec(S[r.team].daily);(r.secs?.[hs.k]?.rows||[]).forEach(x=>{if(x.po&&!m.has(x.po))m.set(x.po,{po:x.po,job:x.job,desc:''})})});
+  return[...m.values()].sort((a,b)=>String(a.po).localeCompare(String(b.po),undefined,{numeric:true}))}
+function viewRoll(v){if(st.openRep&&viewOpen(v,'Roll-up report'))return;
+  const U=st.ru;if(!U.at)U.at=today();const ppl=people();const pos=ruPOs();
+  if(U.by==='person'&&!ppl.some(p=>p.uid===U.who))U.who=ppl[0]?.uid||'';
+  if(U.by==='po'&&!pos.some(p=>p.po===U.po))U.po=pos[0]?.po||'';
+  const [from,to]=ruRange(U.per,U.at);const td=today();
+  const poInfo=U.by==='po'?pos.find(p=>p.po===U.po):null;const poJob=poInfo?.job||'';
+  const person=U.by==='person'?ppl.find(p=>p.uid===U.who):null;
+  const reps=allReports().filter(r=>r.kind==='daily'&&r.date>=from&&r.date<=to&&(
+     U.by==='person'?r._uid===U.who:U.by==='po'?repPOs(r).includes(U.po):(U.team==='both'||r.team===U.team)))
+   .sort((a,b)=>a.date.localeCompare(b.date)||String(a.name).localeCompare(String(b.name)));
+  const d=rollup(reps,U.by==='po'?{job:poJob||undefined,po:U.po}:{});
+  const total=r1(d.hrsTeam.bim+d.hrsTeam.layout);
+  /* hours by day (week/month) or by month (quarter/year) */
+  const hrsRows=[];d.secs.filter(x=>x.s.hours&&x.kind==='daily').forEach(x=>x.rows.forEach(r=>hrsRows.push(r)));
+  const bucket=U.per==='quarter'||U.per==='year'?(x=>x.slice(0,7)):(x=>x);
+  const byB={};hrsRows.forEach(r=>{const k=bucket(r._date);const o=byB[k]=byB[k]||{h:0,p:new Set(),n:0};o.h+=n(r.hours);o.p.add(r._name)});
+  reps.forEach(r=>{const k=bucket(r.date);(byB[k]=byB[k]||{h:0,p:new Set(),n:0}).n++});
+  const bKeys=U.per==='quarter'||U.per==='year'?(()=>{const out=[];let m=from.slice(0,7);while(m<=to.slice(0,7)){out.push(m);const t=parseD(m+'-01');m=iso(new Date(t.getFullYear(),t.getMonth()+1,1)).slice(0,7)}return out})()
+    :(()=>{const out=[];for(let x=from;x<=to;x=addDays(x,1)){const w=parseD(x).getDay();if((w&&w<6)||byB[x])out.push(x)}return out})();
+  const bLabel=k=>k.length===7?parseD(k+'-01').toLocaleDateString(undefined,{month:'long',year:'numeric'}):fmtShort(k);
+  /* who's missing dailies (person / team) */
+  const end=to<td?to:addDays(td,-1);const wd=from<=end?workdays(from,end):[];
+  let missing=[];
+  if(U.by!=='po'&&wd.length){const crew=U.by==='person'?[{uid:U.who,name:person?.name}]:(st.members||[]).filter(m=>m.active&&m.role!=='admin'&&(U.team==='both'||m.team===U.team||m.team==='both')).map(m=>({uid:m.user_id,name:m.name}));
+    const have=new Set(allReports().filter(r=>r.kind==='daily').map(r=>r._uid+'|'+r.date));
+    const started=uid=>{const m=(st.members||[]).find(x=>x.user_id===uid);const ds=allReports().filter(r=>r._uid===uid).map(r=>r.date);const c=m?.created_at?iso(new Date(m.created_at)):'';const all=[...ds,c].filter(Boolean).sort();return all[0]||td};
+    missing=crew.map(c=>{const s0=started(c.uid);return{name:c.name,days:wd.filter(x=>x>=s0&&!have.has(c.uid+'|'+x))}}).filter(c=>c.days.length)}
+  /* non-grid parts of the dailies: header info, checklists, notes */
+  const dayRows=reps.map(r=>{const c=S[r.team].daily;return{r,head:c.header.map(h=>r.head?.[h.k]?`${h.l}: ${r.head[h.k]}`:'').filter(Boolean).join(' · ')}});
+  const notes=[];reps.forEach(r=>S[r.team].daily.secs.forEach(s=>{const vv=r.secs?.[s.k]||{};
+    if(s.type==='checks'){const miss=s.items.filter((_,i)=>!vv.checks?.[i]);if(miss.length)notes.push({r,sec:s.title,txt:'Not checked: '+miss.join('; ')})}
+    if(s.fields){const f=s.fields.filter(f=>vv.fields?.[f.k]!=null&&vv.fields[f.k]!=='');if(f.length)notes.push({r,sec:s.title,txt:f.map(x=>`${x.l}: ${x.t==='job'?jobLabel(vv.fields[x.k]):vv.fields[x.k]}`).join(' · ')})}
+    if(s.type==='grid'&&!s.cols.some(c=>c.k==='job')){(vv.rows||[]).filter(x=>Object.keys(x).length).forEach(x=>notes.push({r,sec:s.title,txt:s.cols.map(c=>x[c.k]!=null&&x[c.k]!==''?`${c.l}: ${x[c.k]}`:'').filter(Boolean).join(' · ')}))}}));
+  const scope=U.by==='person'?(person?.name||'Team member'):U.by==='po'?`PO ${U.po}${poJob?' · '+jobLabel(poJob):''}`:(U.team==='both'?'Both teams':S[U.team].label);
+  const tiles=[[total,'Daily hours'],[reps.length,'Dailies'],...(U.by!=='person'?[[new Set(reps.map(r=>r._uid)).size,'People']]:[]),...(U.by!=='po'?[[Object.keys(d.hrsJob).length,'Jobs']]:[]),...(d.hrsTeam.layout||U.team==='layout'?[[d.points,'Points laid out']]:[]),...(d.hrsTeam.bim||U.team==='bim'?[[d.openRfi,'Open RFIs']]:[]),...(U.by!=='po'?[[missing.reduce((a,c)=>a+c.days.length,0),'Missing dailies']]:[])];
+  let h=`<div class="sheet noprint"><div class="hd"><h2>Roll-up Reports</h2><span class="sub">Every daily for a person, PO, or team, rolled into one report</span></div>
+   <div class="sec"><div class="bar" style="gap:10px;flex-wrap:wrap">
+     <div class="seg ruseg" role="group" aria-label="Pull by">${[['person','Person'],['po','PO'],['team','Team']].map(([k,l])=>`<button data-ruby="${k}" aria-pressed="${U.by===k}">${l}</button>`).join('')}</div>
+     <div class="seg ruseg" role="group" aria-label="Period">${RU_PER.map(([k,l])=>`<button data-ruper="${k}" aria-pressed="${U.per===k}">${l}</button>`).join('')}</div></div>
+    <div class="fields" style="margin-top:12px">
+     ${U.by==='person'?`<label class="f"><span>Person</span><select id="ru-who">${ppl.length?ppl.map(p=>`<option value="${esc(p.uid)}"${p.uid===U.who?' selected':''}>${esc(p.name||'Team member')}</option>`).join(''):'<option value="">No reports yet</option>'}</select></label>`
+      :U.by==='po'?`<label class="f"><span>PO / Task #</span><select id="ru-po">${pos.length?pos.map(p=>`<option value="${esc(p.po)}"${p.po===U.po?' selected':''}>${esc(p.po)}${p.job?' · '+esc(p.job):''}${p.desc?' · '+esc(p.desc):''}</option>`).join(''):'<option value="">No POs yet</option>'}</select></label>`
+      :`<label class="f"><span>Team</span><select id="ru-team">${[['both','Both teams'],['bim','BIM Modeling'],['layout','Trimble Layout']].map(([k,l])=>`<option value="${k}"${U.team===k?' selected':''}>${l}</option>`).join('')}</select></label>`}
+     <label class="f"><span>${U.per==='day'?'Day':'Any date in the '+U.per}</span><input type="date" id="ru-at" value="${esc(U.at)}"></label>
+    </div>
+    <div class="bar offnav" style="margin-top:12px"><button class="btn ghost sm" id="ruPrev" aria-label="Previous ${U.per}">‹ Previous</button><b style="flex:1;text-align:center">${esc(ruLabel(U.per,from,to))}</b><button class="btn ghost sm" id="ruNext" aria-label="Next ${U.per}">Next ›</button>${from<=td&&to>=td?'':'<button class="btn ghost sm" id="ruNow">Current</button>'}</div></div></div>
+  <div class="sheet"><div class="hd"><h2>${esc(scope)}</h2><span class="pill">${esc(RU_PER.find(x=>x[0]===U.per)[1])} roll-up</span><span class="sub">${esc(ruLabel(U.per,from,to))} · dailies only · printed ${esc(fmtD(td))}</span></div>
+   ${poInfo&&st.jobs[jobKey(poJob)]?(()=>{const j=st.jobs[jobKey(poJob)];return `<div class="sec ro"><dl>${[['Job',jobLabel(poJob)],['PM',j.pm],['GC / customer',j.gc],['PO description',poInfo.desc]].map(([a,b])=>`<div><dt>${a}</dt><dd>${esc(b||'—')}</dd></div>`).join('')}</dl></div>`})():''}
+   <div class="sec"><div class="tiles">${tiles.map(([b,s])=>`<div class="tile"><b>${b}</b><span>${s}</span></div>`).join('')}</div></div>
+   <div class="foot noprint">${viewSeg(U.view)}<span class="grow"></span>${reps.length?`<button class="btn ghost sm" onclick="window.print()">Print / Save PDF</button><button class="btn sm" id="ruCsv">Download (CSV)</button>`:''}</div></div>`;
+  if(!reps.length&&!missing.length)h+=`<div class="sheet"><div class="empty">No dailies for ${esc(scope)} in this ${U.per}.</div></div>`;
+  else if(U.view==='all'){h+=`<div class="sheet"><div class="sec"><h3>Dailies in this report</h3>${repRows(reps,U.by!=='person')}</div></div>`+reps.map(r=>`<div class="report-break">${reportHtml(r,U.by==='po'&&poJob?poJob:null)}</div>`).join('')}
+  else{
+    if(U.per!=='day')h+=`<div class="sheet ro"><div class="sec"><h3>Hours by ${U.per==='quarter'||U.per==='year'?'month':'day'}</h3><div class="tbl"><table class="fit"><thead><tr><th>${U.per==='quarter'||U.per==='year'?'Month':'Day'}</th><th style="text-align:right">Hours</th><th style="text-align:right">Dailies</th>${U.by!=='person'?'<th>Who</th>':''}</tr></thead><tbody>${bKeys.map(k=>{const o=byB[k];return `<tr><td class="mono" style="white-space:nowrap">${esc(bLabel(k))}</td><td class="num">${o?r1(o.h):'—'}</td><td class="num">${o?o.n:0}</td>${U.by!=='person'?`<td>${o?esc([...o.p].join(', ')):''}</td>`:''}</tr>`}).join('')}<tr><td><b>Total</b></td><td class="num"><b>${total}</b></td><td class="num"><b>${reps.length}</b></td>${U.by!=='person'?'<td></td>':''}</tr></tbody></table></div></div></div>`;
+    h+=`<div class="split">${U.by!=='person'?miniTable('Hours by person',d.hrsPerson):''}${U.by!=='po'?miniTable('Hours by job',d.hrsJob):''}${miniTable('Hours by PO / task',d.hrsPO)}</div>`;
+    if(missing.length)h+=`<div class="sheet ro"><div class="sec"><h3>Missing dailies</h3><div class="tbl"><table class="fit"><thead><tr><th>Name</th><th style="text-align:right">Days</th><th>Workdays with no daily</th></tr></thead><tbody>${missing.map(c=>`<tr><td>${esc(c.name||'Team member')}</td><td class="num">${c.days.length}</td><td>${esc(c.days.map(fmtShort).join(', '))}</td></tr>`).join('')}</tbody></table></div><p class="note" style="margin:8px 0 0">Weekdays only, through yesterday. Check the Time Off tab for days people were out.</p></div></div>`;
+    if(reps.length)h+=`<div class="sheet ro"><div class="sec"><h3>Dailies included</h3><div class="tbl"><table><thead><tr><th>Date</th><th>Name</th><th>Team</th><th>Day info</th><th style="text-align:right">Hours</th></tr></thead><tbody>${dayRows.map(({r,head})=>`<tr data-open="${esc(r._uid)}|${esc(r._id)}" tabindex="0" style="cursor:pointer"><td class="mono" style="white-space:nowrap">${esc(fmtShort(r.date))}</td><td>${esc(r.name)}</td><td><span class="pill ${r.team==='bim'?'bim':'lay'}">${S[r.team].short}</span></td><td>${esc(head)||'—'}</td><td class="num">${r.hours||0}</td></tr>`).join('')}</tbody></table></div></div></div>`;
+    h+=rollupTables(d,U.by!=='po');
+    if(notes.length)h+=`<div class="sheet ro"><div class="sec"><h3>Other notes from the dailies</h3><div class="tbl"><table><thead><tr><th>Date</th><th>Name</th><th>Section</th><th>Entry</th></tr></thead><tbody>${notes.map(x=>`<tr><td class="mono" style="white-space:nowrap">${esc(fmtShort(x.r.date))}</td><td>${esc(x.r.name)}</td><td>${esc(x.sec)}</td><td>${esc(x.txt)}</td></tr>`).join('')}</tbody></table></div></div></div>`}
+  v.innerHTML=h;
+  v.querySelectorAll('[data-ruby]').forEach(b=>b.onclick=()=>{U.by=b.dataset.ruby;render()});
+  v.querySelectorAll('[data-ruper]').forEach(b=>b.onclick=()=>{U.per=b.dataset.ruper;render()});
+  v.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>{U.view=b.dataset.view;render()});
+  $('#ru-who')&&($('#ru-who').onchange=e=>{U.who=e.target.value;render()});
+  $('#ru-po')&&($('#ru-po').onchange=e=>{U.po=e.target.value;render()});
+  $('#ru-team')&&($('#ru-team').onchange=e=>{U.team=e.target.value;render()});
+  $('#ru-at').onchange=e=>{if(e.target.value){U.at=e.target.value;render()}};
+  $('#ruPrev').onclick=()=>{U.at=ruShift(U.per,from,-1);render()};$('#ruNext').onclick=()=>{U.at=ruShift(U.per,from,1);render()};
+  $('#ruNow')&&($('#ruNow').onclick=()=>{U.at=today();render()});
+  bindOpen(v);
+  $('#ruCsv')&&($('#ruCsv').onclick=()=>saveCsv(rollupCsv(d,[['Roll-up',scope],['Period',ruLabel(U.per,from,to)],['Daily hours',total],['Dailies',reps.length],...missing.map(c=>['Missing dailies: '+(c.name||''),c.days.join(' ')])])+'\r\n\r\n'+csv([H,...reps.flatMap(flatRows)]),`rollup-${(scope).replace(/\W+/g,'-').replace(/^-|-$/g,'')}-${U.per}-${from}.csv`))}
 
 render();start();
 
